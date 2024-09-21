@@ -1,230 +1,170 @@
 import tkinter as tk
 from tkinter import messagebox
+from tkinter import ttk
 import requests
-from PIL import Image, ImageTk
-import numpy as np
 from io import BytesIO
-from pre_trained_model import load_model  
+from PIL import Image, ImageTk
+import xml.etree.ElementTree as ET
 
-DEFAULT_BBOX = "-180,-90,180,90"  
-MODEL_PATH = r"H:\Pahuni coding\ISRO WMS IMAGE MODEL\SegMap\satellite_standard_unet_100epochs.hdf5"  
-
-class GeoportalApp:
+class WMSApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Tkinter Geoportal by Stalwarts")
-        self.root.state('zoomed')
+        self.root.title("SegMAP-Stalwarts")
+        self.root.geometry("1600x900")  # Larger canvas for image display
+        self.root.configure(bg='#c5defb')  # Light background color
 
-        self.zoom_level = 1.0
-        self.bbox = list(map(float, DEFAULT_BBOX.split(',')))  # Convert bbox to float list
+        # Main frame for the entire app
+        self.main_frame = tk.Frame(self.root, bg='#E8E8E8')
+        self.main_frame.pack(fill=tk.BOTH, padx=1.5, pady=1.5, expand=True)
+
+        # Small input box area at the lower corner for WMS input details and buttons
+        self.input_frame = tk.Frame(self.main_frame, bg='#F0F0F0', width=300, height=500)
+        self.input_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+
+        # Get Capabilities section above the input fields
+        tk.Button(self.input_frame, text="Get Capabilities", command=self.get_capabilities, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20).grid(row=0, column=0, padx=2, pady=2,sticky=tk.W)
+        tk.Label(self.input_frame, text="Available Layers:", bg='#fcfbfc').grid(row=0, column=1, padx=2, pady=2,sticky=tk.W)
+        self.layer_listbox = tk.Listbox(self.input_frame, height=3, width=70, bg='#fcfbfc')
+        self.layer_listbox.grid(row=0, column=2, padx=2, pady=2, sticky=tk.W)
+
+        # Input fields and text display grouped together
+        tk.Label(self.input_frame, text="Base WMS URL:", bg='#fcfbfc').grid(row=1, column=0, sticky=tk.W)
+        self.wms_url_entry = tk.Entry(self.input_frame, width=50)
+        self.wms_url_entry.grid(row=1, column=0, columnspan=2, padx=2, pady=2)
+
+        tk.Label(self.input_frame, text="Layers (comma separated):", bg='#fcfbfc').grid(row=2, column=0, sticky=tk.W)
+        self.layers_entry = tk.Entry(self.input_frame, width=50)
+        self.layers_entry.grid(row=2, column=0, columnspan=2, padx=2, pady=2)
+
+        tk.Label(self.input_frame, text="Bounding Box (xmin, ymin, xmax, ymax):", bg='#fcfbfc').grid(row=3, column=0, sticky=tk.W)
+        self.bbox_entry = tk.Entry(self.input_frame, width=50)
+        self.bbox_entry.grid(row=3, column=0, columnspan=2, padx=2, pady=2)
+
+        # New SRS input field1
+        tk.Label(self.input_frame, text="SRS (e.g., EPSG:4326):", bg='#fcfbfc').grid(row=4, column=0, sticky=tk.W)
+        self.srs_entry = tk.Entry(self.input_frame, width=50)
+        self.srs_entry.grid(row=4, column=0, columnspan=2, padx=2, pady=2)
+
+        # New Image Format input field
+        tk.Label(self.input_frame, text="Image Format (e.g., image/png):", bg='#fcfbfc').grid(row=5, column=0, sticky=tk.W)
+        self.format_entry = tk.Entry(self.input_frame, width=50)
+        self.format_entry.grid(row=5, column=0, columnspan=2, padx=2, pady=2)
+
+        # Buttons for URL generation, copy, and image fetching
+        self.generate_url_button = tk.Button(self.input_frame, text="Generate URL", command=self.generate_url, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20)
+        self.generate_url_button.grid(row=6, column=0, padx=5, pady=10, sticky=tk.W)
+
+        tk.Label(self.input_frame, text="Generated URL:", bg='#ebab91').grid(row=7, column=0, sticky=tk.W)
+        self.url_display = tk.Text(self.input_frame, height=3, width=70, wrap=tk.WORD, bg='#fcfbfc')
+        self.url_display.grid(row=7, column=1, padx=2, pady=2)
+
+        self.copy_url_button = tk.Button(self.input_frame, text="Copy URL", command=self.copy_url, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20)
+        self.copy_url_button.grid(row=8, column=0, padx=2, pady=2, sticky=tk.W)
+
+        self.fetch_button = tk.Button(self.input_frame, text="Fetch Image", command=self.fetch_image, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20)
+        self.fetch_button.grid(row=8, column=1, padx=2, pady=2, sticky=tk.W)
+
+        # Larger canvas for displaying the image
+        self.image_canvas = tk.Canvas(self.main_frame, bg='white')
+        self.image_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        # Buttons for model loading and segmentation at the bottom
+        self.load_model_button = tk.Button(self.input_frame, text="Load Model", command=self.load_model, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20)
+        self.load_model_button.grid(row=9, column=0, padx=5, pady=5, sticky=tk.W)
+
+        self.segment_button = tk.Button(self.input_frame, text="Segment Image", command=self.segment_image, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20)
+        self.segment_button.grid(row=9, column=1, padx=5, pady=5, sticky=tk.W)
+
+        # Variables for model and image
         self.model = None
-        self.img = None
-        self.segmented_image = None
+        self.zoom_factor = 1.2
+        self.image = None
+        self.current_bbox = [-180, -90, 180, 90]  # Default bbox
 
-        self.load_model()
-        self.create_widgets()
+    def get_capabilities(self):
+        wms_url = self.wms_url_entry.get()
+        if not wms_url:
+            messagebox.showerror("Error", "Enter the WMS URL first.")
+            return
 
-    def create_widgets(self):
-        input_frame = tk.Frame(self.root, bg="#e0f7fa")
-        input_frame.pack(side=tk.LEFT, fill=tk.Y, padx=20, pady=10)
+        params = {
+            "service": "WMS",
+            "request": "GetCapabilities"
+        }
 
-        fields = [
-            ("Base WMS URL:", "url_entry"),
-            ("Layers:", "layers_entry"),
-            ("Bounding Box (bbox):", "bbox_entry"),
-            ("Image Format:", "format_entry"),
-            ("WMS Version:", "version_entry"),
-            ("CRS:", "crs_entry")
-        ]
-
-        self.entries = {}
-
-        for i, (label_text, entry_name) in enumerate(fields):
-            label = tk.Label(input_frame, text=label_text, bg="#e0f7fa", font=("Arial", 12))
-            label.grid(row=i, column=0, sticky=tk.W, padx=10, pady=5)
-
-            entry = tk.Entry(input_frame, width=40, font=("Arial", 12))
-            entry.grid(row=i, column=1, padx=10, pady=5)
-            self.entries[entry_name] = entry
-
-        self.url_entry = self.entries["url_entry"]
-        self.layers_entry = self.entries["layers_entry"]
-        self.bbox_entry = self.entries["bbox_entry"]
-        self.format_entry = self.entries["format_entry"]
-        self.version_entry = self.entries["version_entry"]
-        self.crs_entry = self.entries["crs_entry"]
-
-        self.generate_btn = tk.Button(input_frame, text="Generate URL", font=("Arial", 12), bg="#a5d6a7", fg="#2e7d32", command=self.generate_url)
-        self.generate_btn.grid(row=6, column=1, pady=10, sticky=tk.E)
-
-        self.url_display = tk.Text(input_frame, height=3, width=50, font=("Arial", 12), state=tk.DISABLED)
-        self.url_display.grid(row=7, column=0, columnspan=2, padx=10, pady=5)
-
-        self.copy_btn = tk.Button(input_frame, text="Copy URL", font=("Arial", 12), bg="#a5d6a7", fg="#2e7d32", command=self.copy_url)
-        self.copy_btn.grid(row=8, column=1, pady=10, sticky=tk.E)
-
-        self.fetch_btn = tk.Button(input_frame, text="Fetch Image", font=("Arial", 12), bg="#a5d6a7", fg="#2e7d32", command=self.fetch_image)
-        self.fetch_btn.grid(row=9, column=1, pady=10, sticky=tk.E)
-
-        self.zoom_in_btn = tk.Button(input_frame, text="Zoom In", font=("Arial", 12), bg="#a5d6a7", fg="#2e7d32", command=self.zoom_in)
-        self.zoom_in_btn.grid(row=10, column=1, pady=10, sticky=tk.E)
-
-        self.zoom_out_btn = tk.Button(input_frame, text="Zoom Out", font=("Arial", 12), bg="#a5d6a7", fg="#2e7d32", command=self.zoom_out)
-        self.zoom_out_btn.grid(row=11, column=1, pady=10, sticky=tk.E)
-
-        self.canvas = tk.Canvas(self.root, bg="white", cursor="cross")
-        self.canvas.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-
-        x_scroll = tk.Scrollbar(self.root, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        x_scroll.pack(side=tk.BOTTOM, fill=tk.X)
-        self.canvas.config(xscrollcommand=x_scroll.set)
-
-        y_scroll = tk.Scrollbar(self.root, orient=tk.VERTICAL, command=self.canvas.yview)
-        y_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.canvas.config(yscrollcommand=y_scroll.set)
-
-    def load_model(self):
         try:
-            weights_path = MODEL_PATH
-            self.model = load_model(weights_path)
-            messagebox.showinfo("Model Loaded", f"Model architecture loaded and weights loaded from:\n{weights_path}")
+            response = requests.get(wms_url, params=params)
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+            namespaces = {'wms': 'http://www.opengis.net/wms'}
+
+            layers = root.findall(".//wms:Layer/wms:Name", namespaces=namespaces)
+            self.layer_listbox.delete(0, tk.END)
+            for layer in layers:
+                self.layer_listbox.insert(tk.END, layer.text)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load model:\n{e}")
+            messagebox.showerror("Error", f"Failed to get capabilities: {e}")
 
     def generate_url(self):
-        base_url = self.url_entry.get().strip()
-        layers = self.layers_entry.get().strip()
-        bbox_input = self.bbox_entry.get().strip()
-        img_format = self.format_entry.get().strip()
-        version = self.version_entry.get().strip()
-        crs = self.crs_entry.get().strip()
+        """Generate the WMS URL based on user inputs."""
+        wms_url = self.wms_url_entry.get()
+        layers = self.layers_entry.get()
+        bbox = self.bbox_entry.get()
+        srs = self.srs_entry.get() or "EPSG:4326"  # Default SRS
+        image_format = self.format_entry.get() or "image/png"  # Default format
 
-        if not all([base_url, layers, crs, img_format, version]):
-            messagebox.showerror("Input Error", "Please fill in all required fields.")
-            return
+        width = self.image_canvas.winfo_width() or 800
+        height = self.image_canvas.winfo_height() or 600
 
-        bbox = self.validate_bbox(bbox_input)  
-        width, height = self.canvas.winfo_width(), self.canvas.winfo_height()
+        # Construct the WMS URL
+        url = (f"{wms_url}?service=WMS&version=1.1.1&request=GetMap"
+               f"&layers={layers}&bbox={bbox}&width={width}&height={height}"
+               f"&srs={srs}&format={image_format}")
 
-        url = (
-            f"{base_url}?service=WMS&request=GetMap&version={version}&layers={layers}&styles="
-            f"&crs={crs}&bbox={bbox}&width={width}&height={height}&format={img_format}&transparent=true"
-        )
-
-        self.url_display.config(state=tk.NORMAL)
         self.url_display.delete(1.0, tk.END)
         self.url_display.insert(tk.END, url)
-        self.url_display.config(state=tk.DISABLED)
-
-    def validate_bbox(self, bbox_input):
-        try:
-            bbox = list(map(float, bbox_input.split(',')))
-            if len(bbox) == 4 and all(-180 <= val <= 180 for val in bbox):
-                return ','.join(map(str, bbox))
-            else:
-                return DEFAULT_BBOX
-        except ValueError:
-            return DEFAULT_BBOX
 
     def fetch_image(self):
-        if self.model is None:
-            messagebox.showerror("Model Error", "Model is not loaded.")
-            return
-
-        url = self.url_display.get(1.0, tk.END).strip()
-
-        if not url:
-            messagebox.showerror("Error", "URL is empty.")
+        """Fetch the image using the generated WMS URL."""
+        wms_url = self.url_display.get("1.0", tk.END).strip()
+        if not wms_url:
+            messagebox.showerror("Error", "Generate the URL first.")
             return
 
         try:
-            response = requests.get(url)
+            response = requests.get(wms_url)
             response.raise_for_status()
 
-            # Open the image
-            self.img = Image.open(BytesIO(response.content))
+            image_data = BytesIO(response.content)
+            self.image = Image.open(image_data)
 
-            # If image is grayscale, convert it to RGB
-            if self.img.mode == 'L':
-                self.img = self.img.convert('RGB')
-
-            self.display_image()
-
-            self.run_model_on_image(self.img)
-
-        except requests.RequestException as e:
-            messagebox.showerror("Error", f"Failed to fetch image:\n{e}")
-
-    def zoom_in(self):
-        self.zoom_level *= 2.0
-        self.update_bbox()
-        self.fetch_image()
-
-    def zoom_out(self):
-        self.zoom_level /= 2.0
-        self.update_bbox()
-        self.fetch_image()
-
-    def update_bbox(self):
-        center_lon = (self.bbox[0] + self.bbox[2]) / 2
-        center_lat = (self.bbox[1] + self.bbox[3]) / 2
-
-        lon_span = (self.bbox[2] - self.bbox[0]) / self.zoom_level
-        lat_span = (self.bbox[3] - self.bbox[1]) / self.zoom_level
-
-        self.bbox = [
-            max(-180, center_lon - lon_span / 2),
-            max(-90, center_lat - lat_span / 2),
-            min(180, center_lon + lon_span / 2),
-            min(90, center_lat + lat_span / 2)
-        ]
-
-    def run_model_on_image(self, img):
-        try:
-            # Convert to grayscale and resize for the model
-            grayscale_img = img.convert('L')
-            img_array = np.array(grayscale_img.resize((256, 256))) / 255.0
-            img_array = np.expand_dims(img_array, axis=-1)  # Add channel dimension for grayscale
-            img_array = np.expand_dims(img_array, axis=0)   # Add batch dimension
-
-            # Make prediction using the model
-            prediction = self.model.predict(img_array)
-
-            # Process the predicted segmentation map
-            segmented_image = np.argmax(prediction, axis=-1).squeeze()
-            segmented_image_pil = Image.fromarray(segmented_image.astype(np.uint8) * 255)
-
-            # Resize to match original image size
-            self.segmented_image = segmented_image_pil.resize(self.img.size)
-
-            # Display segmented image
-            self.display_segmented_image()
-
+            # Display the fetched image on the canvas
+            self.display_image(self.image)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to segment image:\n{e}")
+            messagebox.showerror("Error", f"Failed to fetch image: {e}")
 
-    def display_image(self):
-        img_width, img_height = self.img.size
-        self.canvas.config(scrollregion=(0, 0, img_width, img_height))
+    def display_image(self, image):
+        # Resize image to fit the canvas if needed
+        width, height = self.image_canvas.winfo_width(), self.image_canvas.winfo_height()
+        resized_image = image.resize((width, height), Image.ANTIALIAS)
+        self.tk_image = ImageTk.PhotoImage(resized_image)
 
-        tk_img = ImageTk.PhotoImage(self.img)
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=tk_img)
-        self.canvas.image = tk_img
-
-    def display_segmented_image(self):
-        if self.segmented_image is not None:
-            tk_segmented_img = ImageTk.PhotoImage(self.segmented_image)
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=tk_segmented_img)
-            self.canvas.segmented_image = tk_segmented_img
+        self.image_canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
+        self.image_canvas.image = self.tk_image  # Keep a reference
 
     def copy_url(self):
-        url = self.url_display.get(1.0, tk.END).strip()
         self.root.clipboard_clear()
-        self.root.clipboard_append(url)
-        messagebox.showinfo("URL Copied", "URL has been copied to clipboard.")
+        self.root.clipboard_append(self.url_display.get("1.0", tk.END).strip())
+        self.root.update()  # To ensure clipboard contents persist
+
+    def load_model(self):
+        pass  # Implement as needed
+
+    def segment_image(self):
+        pass  # Implement as needed
 
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = GeoportalApp(root)
+    app = WMSApp(root)
     root.mainloop()
