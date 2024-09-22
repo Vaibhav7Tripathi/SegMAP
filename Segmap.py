@@ -1,170 +1,330 @@
-import tkinter as tk
-from tkinter import messagebox
-from tkinter import ttk
+import kivy
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.checkbox import CheckBox
+from kivy.uix.image import Image
+from kivy.uix.popup import Popup
+from kivy.uix.floatlayout import FloatLayout
+from kivy.core.clipboard import Clipboard
+from kivy.core.image import Image as CoreImage
+from kivy.properties import ObjectProperty, StringProperty, NumericProperty
+from kivy.graphics.transformation import Matrix
+
 import requests
 from io import BytesIO
-from PIL import Image, ImageTk
+from PIL import Image as PILImage
 import xml.etree.ElementTree as ET
 
-class WMSApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("SegMAP-Stalwarts")
-        self.root.geometry("1600x900")  # Larger canvas for image display
-        self.root.configure(bg='#c5defb')  # Light background color
+# Placeholder for model loading and segmentation
+def load_pretrained_model():
+    # Implement model loading here
+    pass
 
-        # Main frame for the entire app
-        self.main_frame = tk.Frame(self.root, bg='#E8E8E8')
-        self.main_frame.pack(fill=tk.BOTH, padx=1.5, pady=1.5, expand=True)
+def segment_image(pil_image):
+    # Implement image segmentation here
+    # For demonstration, returning the original image
+    return pil_image
 
-        # Small input box area at the lower corner for WMS input details and buttons
-        self.input_frame = tk.Frame(self.main_frame, bg='#F0F0F0', width=300, height=500)
-        self.input_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+class LayerCheckbox(BoxLayout):
+    """Custom widget for layer selection with a checkbox and label."""
+    selected = False
+    layer_name = StringProperty("")
 
-        # Get Capabilities section above the input fields
-        tk.Button(self.input_frame, text="Get Capabilities", command=self.get_capabilities, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20).grid(row=0, column=0, padx=2, pady=2,sticky=tk.W)
-        tk.Label(self.input_frame, text="Available Layers:", bg='#fcfbfc').grid(row=0, column=1, padx=2, pady=2,sticky=tk.W)
-        self.layer_listbox = tk.Listbox(self.input_frame, height=3, width=70, bg='#fcfbfc')
-        self.layer_listbox.grid(row=0, column=2, padx=2, pady=2, sticky=tk.W)
+    def __init__(self, layer_name, **kwargs):
+        super().__init__(**kwargs)
+        self.orientation = 'horizontal'
+        self.size_hint_y = None
+        self.height = 30
+        self.layer_name = layer_name
 
-        # Input fields and text display grouped together
-        tk.Label(self.input_frame, text="Base WMS URL:", bg='#fcfbfc').grid(row=1, column=0, sticky=tk.W)
-        self.wms_url_entry = tk.Entry(self.input_frame, width=50)
-        self.wms_url_entry.grid(row=1, column=0, columnspan=2, padx=2, pady=2)
+        self.checkbox = CheckBox()
+        self.checkbox.bind(active=self.on_checkbox_active)
+        self.add_widget(self.checkbox)
 
-        tk.Label(self.input_frame, text="Layers (comma separated):", bg='#fcfbfc').grid(row=2, column=0, sticky=tk.W)
-        self.layers_entry = tk.Entry(self.input_frame, width=50)
-        self.layers_entry.grid(row=2, column=0, columnspan=2, padx=2, pady=2)
+        self.label = Label(text=layer_name, halign='left', valign='middle')
+        self.label.bind(size=self.label.setter('text_size'))
+        self.add_widget(self.label)
 
-        tk.Label(self.input_frame, text="Bounding Box (xmin, ymin, xmax, ymax):", bg='#fcfbfc').grid(row=3, column=0, sticky=tk.W)
-        self.bbox_entry = tk.Entry(self.input_frame, width=50)
-        self.bbox_entry.grid(row=3, column=0, columnspan=2, padx=2, pady=2)
+    def on_checkbox_active(self, checkbox, value):
+        self.selected = value
 
-        # New SRS input field1
-        tk.Label(self.input_frame, text="SRS (e.g., EPSG:4326):", bg='#fcfbfc').grid(row=4, column=0, sticky=tk.W)
-        self.srs_entry = tk.Entry(self.input_frame, width=50)
-        self.srs_entry.grid(row=4, column=0, columnspan=2, padx=2, pady=2)
+class WMSImageFetcherApp(App):
+    zoom_scale = NumericProperty(1.0)  # Use NumericProperty instead of FloatProperty
 
-        # New Image Format input field
-        tk.Label(self.input_frame, text="Image Format (e.g., image/png):", bg='#fcfbfc').grid(row=5, column=0, sticky=tk.W)
-        self.format_entry = tk.Entry(self.input_frame, width=50)
-        self.format_entry.grid(row=5, column=0, columnspan=2, padx=2, pady=2)
+    def build(self):
+        self.title = "WMS Image Fetcher with Kivy"
 
-        # Buttons for URL generation, copy, and image fetching
-        self.generate_url_button = tk.Button(self.input_frame, text="Generate URL", command=self.generate_url, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20)
-        self.generate_url_button.grid(row=6, column=0, padx=5, pady=10, sticky=tk.W)
+        # Default values
+        self.default_bbox = "-180,-90,180,90"
+        self.default_crs = "EPSG:4326"
+        self.default_format = "image/png"
 
-        tk.Label(self.input_frame, text="Generated URL:", bg='#ebab91').grid(row=7, column=0, sticky=tk.W)
-        self.url_display = tk.Text(self.input_frame, height=3, width=70, wrap=tk.WORD, bg='#fcfbfc')
-        self.url_display.grid(row=7, column=1, padx=2, pady=2)
+        # Initialize model (placeholder)
+        load_pretrained_model()
 
-        self.copy_url_button = tk.Button(self.input_frame, text="Copy URL", command=self.copy_url, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20)
-        self.copy_url_button.grid(row=8, column=0, padx=2, pady=2, sticky=tk.W)
+        main_layout = BoxLayout(orientation='horizontal')
 
-        self.fetch_button = tk.Button(self.input_frame, text="Fetch Image", command=self.fetch_image, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20)
-        self.fetch_button.grid(row=8, column=1, padx=2, pady=2, sticky=tk.W)
+        # Side Panel Layout
+        side_panel = BoxLayout(orientation='vertical', size_hint=(0.3, 1), padding=10, spacing=10)
 
-        # Larger canvas for displaying the image
-        self.image_canvas = tk.Canvas(self.main_frame, bg='white')
-        self.image_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        # Base URL Input
+        self.base_url_input = TextInput(
+            hint_text="Base WMS URL",
+            size_hint=(1, None),
+            height=40
+        )
+        side_panel.add_widget(self.base_url_input)
 
-        # Buttons for model loading and segmentation at the bottom
-        self.load_model_button = tk.Button(self.input_frame, text="Load Model", command=self.load_model, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20)
-        self.load_model_button.grid(row=9, column=0, padx=5, pady=5, sticky=tk.W)
+        # Fetch Layers Button
+        fetch_layers_btn = Button(
+            text="Fetch Layers",
+            size_hint=(1, None),
+            height=40
+        )
+        fetch_layers_btn.bind(on_press=self.fetch_layers)
+        side_panel.add_widget(fetch_layers_btn)
 
-        self.segment_button = tk.Button(self.input_frame, text="Segment Image", command=self.segment_image, bg='#fbc5d2', fg='black', bd=0, relief='flat', height=1, width=20)
-        self.segment_button.grid(row=9, column=1, padx=5, pady=5, sticky=tk.W)
+        # Layers Display
+        layers_label = Label(text="Available Layers:", size_hint=(1, None), height=30, halign='left', valign='middle')
+        layers_label.bind(size=layers_label.setter('text_size'))
+        side_panel.add_widget(layers_label)
 
-        # Variables for model and image
-        self.model = None
-        self.zoom_factor = 1.2
-        self.image = None
-        self.current_bbox = [-180, -90, 180, 90]  # Default bbox
+        self.layers_container = BoxLayout(orientation='vertical', size_hint_y=None)
+        self.layers_container.bind(minimum_height=self.layers_container.setter('height'))
 
-    def get_capabilities(self):
-        wms_url = self.wms_url_entry.get()
-        if not wms_url:
-            messagebox.showerror("Error", "Enter the WMS URL first.")
+        scroll_view = ScrollView(size_hint=(1, 0.3))
+        scroll_view.add_widget(self.layers_container)
+        side_panel.add_widget(scroll_view)
+
+        # CRS Input
+        self.crs_input = TextInput(
+            hint_text=f"CRS (default: {self.default_crs})",
+            size_hint=(1, None),
+            height=40
+        )
+        side_panel.add_widget(self.crs_input)
+
+        # Bounding Box Input
+        self.bbox_input = TextInput(
+            hint_text=f"Bounding Box (default: {self.default_bbox})",
+            size_hint=(1, None),
+            height=40
+        )
+        side_panel.add_widget(self.bbox_input)
+
+        # Image Format Input
+        self.format_input = TextInput(
+            hint_text=f"Image Format (default: {self.default_format})",
+            size_hint=(1, None),
+            height=40
+        )
+        side_panel.add_widget(self.format_input)
+
+        # Generate URL Button
+        generate_url_btn = Button(
+            text="Generate URL",
+            size_hint=(1, None),
+            height=40
+        )
+        generate_url_btn.bind(on_press=self.generate_wms_url)
+        side_panel.add_widget(generate_url_btn)
+
+        # URL Display
+        self.url_display = TextInput(
+            text="",
+            readonly=True,
+            size_hint=(1, None),
+            height=60,
+            multiline=True
+        )
+        side_panel.add_widget(self.url_display)
+
+        # Copy URL Button
+        copy_url_btn = Button(
+            text="Copy URL",
+            size_hint=(1, None),
+            height=40
+        )
+        copy_url_btn.bind(on_press=self.copy_wms_url)
+        side_panel.add_widget(copy_url_btn)
+
+        # Fetch Image Button
+        fetch_image_btn = Button(
+            text="Fetch Image",
+            size_hint=(1, None),
+            height=40
+        )
+        fetch_image_btn.bind(on_press=self.fetch_image)
+        side_panel.add_widget(fetch_image_btn)
+
+        # Zoom Buttons Layout
+        zoom_layout = BoxLayout(orientation='horizontal', size_hint=(1, None), height=40, spacing=10)
+        zoom_in_btn = Button(text="+", size_hint=(0.5, 1))
+        zoom_in_btn.bind(on_press=self.zoom_in)
+        zoom_layout.add_widget(zoom_in_btn)
+
+        zoom_out_btn = Button(text="-", size_hint=(0.5, 1))
+        zoom_out_btn.bind(on_press=self.zoom_out)
+        zoom_layout.add_widget(zoom_out_btn)
+        side_panel.add_widget(zoom_layout)
+
+        # Segmentation Button
+        segment_image_btn = Button(
+            text="Segment Image",
+            size_hint=(1, None),
+            height=40
+        )
+        segment_image_btn.bind(on_press=self.segment_image)
+        side_panel.add_widget(segment_image_btn)
+
+        # Add side panel to main layout
+        main_layout.add_widget(side_panel)
+
+        # Image Display Area
+        image_layout = FloatLayout()
+        self.image_widget = Image(
+            source='',
+            allow_stretch=True,
+            keep_ratio=True,
+            size_hint=(1, 1),
+            pos_hint={'x': 0, 'y': 0}
+        )
+        image_layout.add_widget(self.image_widget)
+        main_layout.add_widget(image_layout)
+
+        return main_layout
+
+    def fetch_layers(self, instance):
+        """Fetch available layers from the WMS server."""
+        base_url = self.base_url_input.text.strip()
+        if not base_url:
+            self.show_popup("Error", "Please enter the Base WMS URL.")
             return
 
-        params = {
-            "service": "WMS",
-            "request": "GetCapabilities"
-        }
+        request_url = f"{base_url}?service=WMS&version=1.3.0&request=GetCapabilities"
 
         try:
-            response = requests.get(wms_url, params=params)
-            response.raise_for_status()
-            root = ET.fromstring(response.content)
+            response = requests.get(request_url)
+            if response.status_code == 200:
+                layers = self.parse_layers(response.content)
+                if layers:
+                    self.display_layers(layers)
+                else:
+                    self.show_popup("Error", "No layers found in the GetCapabilities response.")
+            else:
+                self.show_popup("Error", f"Failed to fetch layers. Status code: {response.status_code}")
+        except Exception as e:
+            self.show_popup("Error", f"Error fetching layers: {str(e)}")
+
+    def parse_layers(self, xml_content):
+        """Parse XML to extract layer names."""
+        try:
+            root = ET.fromstring(xml_content)
             namespaces = {'wms': 'http://www.opengis.net/wms'}
+            layers = []
+            for layer in root.findall('.//wms:Layer/wms:Layer', namespaces):
+                name = layer.find('wms:Name', namespaces)
+                if name is not None and name.text:
+                    layers.append(name.text)
+            return layers
+        except ET.ParseError:
+            self.show_popup("Error", "Failed to parse GetCapabilities XML.")
+            return []
 
-            layers = root.findall(".//wms:Layer/wms:Name", namespaces=namespaces)
-            self.layer_listbox.delete(0, tk.END)
-            for layer in layers:
-                self.layer_listbox.insert(tk.END, layer.text)
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to get capabilities: {e}")
+    def display_layers(self, layers):
+        """Display layers with checkboxes."""
+        self.layers_container.clear_widgets()
+        for layer in layers:
+            layer_checkbox = LayerCheckbox(layer_name=layer)
+            self.layers_container.add_widget(layer_checkbox)
 
-    def generate_url(self):
-        """Generate the WMS URL based on user inputs."""
-        wms_url = self.wms_url_entry.get()
-        layers = self.layers_entry.get()
-        bbox = self.bbox_entry.get()
-        srs = self.srs_entry.get() or "EPSG:4326"  # Default SRS
-        image_format = self.format_entry.get() or "image/png"  # Default format
-
-        width = self.image_canvas.winfo_width() or 800
-        height = self.image_canvas.winfo_height() or 600
-
-        # Construct the WMS URL
-        url = (f"{wms_url}?service=WMS&version=1.1.1&request=GetMap"
-               f"&layers={layers}&bbox={bbox}&width={width}&height={height}"
-               f"&srs={srs}&format={image_format}")
-
-        self.url_display.delete(1.0, tk.END)
-        self.url_display.insert(tk.END, url)
-
-    def fetch_image(self):
-        """Fetch the image using the generated WMS URL."""
-        wms_url = self.url_display.get("1.0", tk.END).strip()
-        if not wms_url:
-            messagebox.showerror("Error", "Generate the URL first.")
+    def generate_wms_url(self, instance):
+        """Generate WMS URL based on user input or default values."""
+        base_url = self.base_url_input.text.strip()
+        if not base_url:
+            self.show_popup("Error", "Please enter the Base WMS URL.")
             return
 
+        # Get selected layers
+        selected_layers = [child.layer_name for child in self.layers_container.children if child.selected]
+        if not selected_layers:
+            self.show_popup("Error", "Please select at least one layer.")
+            return
+        layers = ",".join(selected_layers)
+
+        # Get other parameters with defaults
+        bbox = self.bbox_input.text.strip() if self.bbox_input.text.strip() else self.default_bbox
+        crs = self.crs_input.text.strip() if self.crs_input.text.strip() else self.default_crs
+        image_format = self.format_input.text.strip() if self.format_input.text.strip() else self.default_format
+
+        # Construct the URL
+        self.wms_url = (
+            f"{base_url}?service=WMS&version=1.3.0&request=GetMap&layers={layers}&bbox={bbox}&width=800&height=600&crs={crs}&format={image_format}"
+        )
+
+        self.url_display.text = self.wms_url
+
+    def copy_wms_url(self, instance):
+        """Copy the generated WMS URL to the clipboard."""
+        Clipboard.copy(self.url_display.text)
+        self.show_popup("Success", "WMS URL copied to clipboard.")
+
+    def fetch_image(self, instance):
+        """Fetch the image from the generated WMS URL."""
         try:
-            response = requests.get(wms_url)
-            response.raise_for_status()
-
-            image_data = BytesIO(response.content)
-            self.image = Image.open(image_data)
-
-            # Display the fetched image on the canvas
-            self.display_image(self.image)
+            response = requests.get(self.wms_url)
+            if response.status_code == 200:
+                image_data = BytesIO(response.content)
+                pil_image = PILImage.open(image_data)
+                self.display_fetched_image(pil_image)
+            else:
+                self.show_popup("Error", f"Failed to fetch image. Status code: {response.status_code}")
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to fetch image: {e}")
+            self.show_popup("Error", f"Error fetching image: {str(e)}")
 
-    def display_image(self, image):
-        # Resize image to fit the canvas if needed
-        width, height = self.image_canvas.winfo_width(), self.image_canvas.winfo_height()
-        resized_image = image.resize((width, height), Image.ANTIALIAS)
-        self.tk_image = ImageTk.PhotoImage(resized_image)
+    def display_fetched_image(self, pil_image):
+        """Display the fetched image in the Kivy app."""
+        pil_image.save("fetched_image.png")  # Save temporarily
+        self.image_widget.source = "fetched_image.png"
+        self.image_widget.reload()
 
-        self.image_canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
-        self.image_canvas.image = self.tk_image  # Keep a reference
+    def zoom_in(self, instance):
+        """Zoom in on the image."""
+        self.zoom_scale *= 1.2
+        self.image_widget.size = (self.image_widget.width * self.zoom_scale, self.image_widget.height * self.zoom_scale)
+        self.image_widget.reload()
 
-    def copy_url(self):
-        self.root.clipboard_clear()
-        self.root.clipboard_append(self.url_display.get("1.0", tk.END).strip())
-        self.root.update()  # To ensure clipboard contents persist
+    def zoom_out(self, instance):
+        """Zoom out on the image."""
+        self.zoom_scale /= 1.2
+        self.image_widget.size = (self.image_widget.width * self.zoom_scale, self.image_widget.height * self.zoom_scale)
+        self.image_widget.reload()
 
-    def load_model(self):
-        pass  # Implement as needed
+    def segment_image(self, instance):
+        """Segment the displayed image using the loaded model."""
+        if self.image_widget.source:
+            pil_image = PILImage.open("fetched_image.png")
+            segmented_image = segment_image(pil_image)  # Placeholder for segmentation
+            segmented_image.save("segmented_image.png")  # Save the segmented image
+            self.image_widget.source = "segmented_image.png"
+            self.image_widget.reload()
+        else:
+            self.show_popup("Error", "No image to segment.")
 
-    def segment_image(self):
-        pass  # Implement as needed
+    def show_popup(self, title, message):
+        """Show a popup with a message."""
+        content = BoxLayout(orientation='vertical')
+        content.add_widget(Label(text=message))
+        close_button = Button(text="Close", size_hint=(1, None), height=40)
+        content.add_widget(close_button)
 
+        popup = Popup(title=title, content=content, size_hint=(0.8, 0.5))
+        close_button.bind(on_press=popup.dismiss)
+        popup.open()
 
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = WMSApp(root)
-    root.mainloop()
+if __name__ == '__main__':
+    WMSImageFetcherApp().run()
