@@ -2,15 +2,12 @@
 
 SegMAP is a cross-platform desktop application designed to perform **on-device semantic segmentation** of satellite and web map images using a **U-Net based model**. It is capable of fetching images from any valid **WMS (Web Map Service)** server and exporting geospatial segmentation results in **GeoJSON format**.
 
-> 🚀 Built for Smart India Hackathon 2024  
-> 🧠 Team Stalwarts | Problem Statement ID: 1735 | Theme: Smart Automation
-
 ---
 
 ## 🔍 Features
 
 - **Supervised segmentation** of satellite and aerial imagery using U-Net.
-- **Tkinter-based interface** for platform-independent usability.
+- **Kivy-based interface** for platform-independent usability.
 - **Dynamic map fetching** from any WMS server.
 - **Export segmented results** in GeoJSON format.
 - Designed for **non-technical users** with easy input and interaction.
@@ -19,7 +16,7 @@ SegMAP is a cross-platform desktop application designed to perform **on-device s
 
 ## 🛠 Technical Overview
 
-- Interface developed using **Python Tkinter**.
+- Interface developed using **Python Kivy**.
 - Semantic segmentation via **multi-layer U-Net** trained on aerial imagery.
 - Achieves **91.7% accuracy** after 50 epochs on benchmark data.
 - Dynamically fetches map tiles based on user-defined coordinates.
@@ -67,17 +64,3 @@ SegMAP is a cross-platform desktop application designed to perform **on-device s
 - Combines **fetch + segment** — unlike other tools that do only one.
 
 ---
-
-## 📜 License
-
-This project is licensed under the BSD 3-Clause License.
-
----
-
-## 👥 Team
-
-**Team Name:** Stalwarts  
-**Event:** Smart India Hackathon 2024  
-**Category:** Software  
-**PS Title:** On-device semantic segmentation of WMS services with geospatial data export  
-**Team ID:** 4470
